@@ -1,0 +1,192 @@
+---
+title: "Predicting errors in Unilateral Dumbbell Biceps Curl exercises"
+author: "Marius Peche"
+date: "22 July 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE)
+```
+
+## Introduction and background
+This project attempts to create a prediction model to decide if a particular exercise had been performed correctly, or if one of four common mistakes has occurred during the routine. Data has been sourced from [http://groupware.les.inf.puc-rio.br/har](http://groupware.les.inf.puc-rio.br/har), where six participants preformed 10 repetitions of the above mentioned exercise in five different ways, __Class A__ being done correctly, and __class B__ to __E__ making a predefined common mistake during the exercise. Measuring devices such as accelerators were placed on four locations to record the movement and changes in orientation of the following regions: hips, arm, forearm and the dumbbell itself.
+
+We will be using the _R_ package _caret_ for model building and creating data partitions for validations later on.
+
+
+```{r, warning=FALSE}
+library(caret)
+
+```
+***
+## Initial Data analysis and preporcessing
+
+###Loading and Splitting Data
+We load the available data, and take a quick look at what the training set looks like. We also create a separate 20% partition for validation at the end of the project, since the supplied test set is to be used for the quiz.
+```{r cache=TRUE, message=FALSE}
+initial_training <- read.csv(file.path(getwd(),"pml-training.csv"))
+initial_testing <- read.csv(file.path(getwd(),"pml-testing.csv"))
+inTrain <- createDataPartition(y=initial_training$classe, p=0.80, list=FALSE)
+training <- initial_training[inTrain,]
+validate <- initial_training[-inTrain,]
+str(training, vec.len=6, list.len=20)
+```
+
+### Initial conclusions
+We notice that there are date and time information captured in the data set. However, the paper that describes the initial investigations confirmed that, though measurements were taken using a sliding window approach, only the mean and variance captured by the measuring devices were recorded. Therefore, since the correctness of an exercise doesn't depend on the time of day, something confirmed by the graph below, it will not be considered during the training of the prediction model.
+
+```{r cache=TRUE, message=FALSE}
+investigate <- training[,which(names(training) %in%
+      c("X","user_name","raw_timestamp_part_1","raw_timestamp_part_2",
+        "cvtd_timestamp","new_window","num_window","classe"))]
+
+library(ggplot2)
+ggplot(investigate,aes(num_window,color=classe))+geom_density()
+```
+
+### Missing Values
+We also see that there are columns with a lot of missing values, or values that is either blank or the error-message "#DIV/0!". If these values are too numerous, we need to remove these columns as it won't contribute anything to the final models.
+```{r cache=TRUE, message=FALSE}
+calculate_null_freq <- function(na.freq) {
+    for (a in seq_along(na.freq)) {
+        #if 
+        if (!(is.na(na.freq[a])) && (na.freq[a] == "" || na.freq[a] == "#DIV/0!")){
+            na.freq[a] = NA
+        }
+    }  
+    
+    sum(is.na(na.freq))/length(na.freq)
+}
+index <- lapply(initial_training,calculate_null_freq)
+ggplot(data.frame(column=names(index),err_rate=as.numeric(index)),aes(err_rate))+geom_histogram()
+```
+We find that data in a column is either mostly missing, or all present, therefore we remove the empty columns form our training set. This will reduce the number of predictor variables from `r length(initial_training)` to `r length(initial_training)-length(index[index>=0.2])`
+```{r cache=TRUE}
+training <- training[,index<0.2]
+```
+
+###Corrolated predictions
+Hoping to reduce the number of predictors even further, we calculate the correlation between the remaining numeric values.
+```{r cache=TRUE, message=FALSE}
+corMatrix <- cor(training[,!(sapply(training,is.factor))])
+diag(corMatrix) <- 0
+which(corMatrix>0.8,arr.ind=TRUE)
+```
+Though not very clear, it does appear that there may be some correlation between the values of the different regions, therefore we will focus our modeling in that direction.
+
+***
+## Attempt 1: Principal Companent Analysis for a single prediction model.
+###Description
+The first model we will attempt to create involves reducing the predictions for each region separately, using Principal Component Analysis. Thereafter, we combine all the data again and train our model, using the default caret libraries. We will also use k-fold cross validation with 10 folds to perfect our random forest.
+
+###Process
+```{r cache=TRUE, message=FALSE}
+names(training[,grep("belt",names(training))])
+```
+Looking at the names of the columns for, say, the belt we can identify around 4 associated measurements: Euler angles (pitch, roll, yaw), magnet, accelerate, gyros. Therefore we will create 4 principal components for each region. Finally, we combine the principal components for these regions, along with the original result-variable into a new training set to be used for training the first model.
+
+```{r cache=TRUE, message=FALSE}
+belt_trainset <- training[,grep("belt",names(training))]
+preProc_belt <- preProcess(belt_trainset, method="pca", pcaComp = 4)
+belt_trainprep <- predict(preProc_belt,belt_trainset)
+
+arm_trainset <- training[,grep("arm",names(training))]
+preProc_arm <- preProcess(arm_trainset, method="pca", pcaComp = 4)
+arm_trainprep <- predict(preProc_arm,arm_trainset)
+
+forearm_trainset <- training[,grep("forearm",names(training))]
+preProc_forearm <- preProcess(forearm_trainset, method="pca", pcaComp = 4)
+forearm_trainprep <- predict(preProc_forearm,forearm_trainset)
+
+dumbbell_trainset <- training[,grep("dumbbell",names(training))]
+preProc_dumbell <- preProcess(dumbbell_trainset, method="pca", pcaComp = 4)
+dumbbell_trainprep <- predict(preProc_dumbell,dumbbell_trainset)
+
+model1_training <- data.frame(belt=belt_trainprep, arm=arm_trainprep, forearm=forearm_trainprep, dumbbell=dumbbell_trainprep,
+                              classe=training[,which(names(training)=="classe")])
+
+#create 10 k-fold cross validation
+train_control <- trainControl(method="cv", number=10)
+model1 <- train(classe ~ ., model1_training, trControl=train_control)
+```
+
+Printing out the details of the first model, we find that the accuracy is reported as `r max(model1$results$Accuracy)`
+
+***
+## Attempt 2: Model stacking.
+###Description
+Stacking several models have always increased the prediction power. It will be worth while to investigate the results of creating prediction models for each region separately, and then to pool their results together in a final prediction model. Again, we will use the default settings provided by the caret library to train our models, and again we will also use k-fold cross validation with 10 folds to perfect our random forest.
+
+###Process
+
+```{r cache=TRUE, message=FALSE}
+belt_trainset["classe"] <- training["classe"]
+belt_model <- train(classe ~ ., belt_trainset, trControl=train_control)
+belt_predict_train <- predict(belt_model, newdata = belt_trainset)
+
+arm_trainset["classe"] <- training["classe"]
+arm_model <- train(classe ~ ., arm_trainset, trControl=train_control)
+arm_predict_train <- predict(arm_model, newdata = arm_trainset)
+
+forearm_trainset["classe"] <- training["classe"]
+forearm_model <- train(classe ~ ., forearm_trainset, trControl=train_control)
+forearm_predict_train <- predict(forearm_model, newdata = forearm_trainset)
+
+dumbbell_trainset["classe"] <- training["classe"]
+dumbbell_model <- train(classe ~ ., dumbbell_trainset, trControl=train_control)
+dumbbell_predict_train <- predict(dumbbell_model, newdata = dumbbell_trainset)
+
+model2_training <- data.frame(belt=belt_predict_train, arm=arm_predict_train, forearm=forearm_predict_train, dumbbell=dumbbell_predict_train,
+                              classe=training[,which(names(training)=="classe")])
+
+model2 <- train(classe ~ ., model2_training, trControl=train_control)
+```
+
+Printing out the details of the these models, we find that the individually, the accuracy is reported as between `r min(c(max(belt_model$results$Accuracy),max(arm_model$results$Accuracy),max(forearm_model$results$Accuracy),max(dumbbell_model$results$Accuracy)))` and `r max(c(max(belt_model$results$Accuracy),max(arm_model$results$Accuracy),max(forearm_model$results$Accuracy),max(dumbbell_model$results$Accuracy)))`, with the final model reporting an accuracy of `r max(model2$results$Accuracy)`. This suggest over-fitting, which is the main reason for the proper validation set we created earlier on.
+
+***
+## Final validation of the two models.
+We process the validation set in the same manner as the training set, using the created models, and attempt to predict their classes using both models described above.
+
+```{r cache=TRUE, message=FALSE}
+validate <- validate[,index<0.2]
+belt_testset <- validate[,grep("belt",names(validate))]
+belt_testprep <- predict(preProc_belt,belt_testset)
+
+arm_testset <- validate[,grep("arm",names(validate))]
+arm_testprep <- predict(preProc_arm,arm_testset)
+
+forearm_testset <- validate[,grep("forearm",names(validate))]
+forearm_testprep <- predict(preProc_forearm,forearm_testset)
+
+dumbbell_testset <- validate[,grep("dumbbell",names(validate))]
+dumbbell_testprep <- predict(preProc_dumbell,dumbbell_testset)
+
+model1_testing <- data.frame(belt=belt_testprep, arm=arm_testprep, forearm=forearm_testprep, dumbbell=dumbbell_testprep,
+                             classe=validate$class)
+
+model1_results <- predict(model1,newdata = model1_testing)
+conf1 <- confusionMatrix(model1_results,model1_testing$classe)
+
+###model2
+belt_predict_test <- predict(belt_model, newdata = belt_testset)
+arm_predict_test <- predict(arm_model, newdata = arm_testset)
+forearm_predict_test <- predict(forearm_model, newdata = forearm_testset)
+dumbbell_predict_test <- predict(dumbbell_model, newdata = dumbbell_testset)
+model2_testing <- data.frame(belt=belt_predict_test, arm=arm_predict_test, forearm=forearm_predict_test, dumbbell=dumbbell_predict_test,
+                             classe=validate$classe)
+
+model2_results <- predict(model2,newdata = model2_testing)
+conf2 <- confusionMatrix(model2_results,model2_testing$classe)
+```
+***
+##Conclusion
+Though not described in this report, the results of _Linear discriminant analysis_ reports have also been considered and found to perform much worse than the default _Random forests_ offered by the __caret__ library. _Naive Beyas_ predictions were specifically not investigated, as the whole approach of this study revolved around the dependence between the measurements.
+
+We found that the first approach resulted in an expected out-of-sample error rate of `r (1-conf1$overall["Accuracy"])*100`%, while the second approach actually did slightly worse at `r (1-conf2$overall["Accuracy"])*100`%.
+
+
+##Citations
+The data has been obtained form the following source:
+_Velloso, E.; Bulling, A.; Gellersen, H.;??Ugulino, W.;??Fuks, H.??Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013._
