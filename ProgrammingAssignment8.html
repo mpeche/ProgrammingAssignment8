@@ -321,8 +321,10 @@ model1_testing &lt;- data.frame(belt=belt_testprep, arm=arm_testprep, forearm=fo
 
 model1_results &lt;- predict(model1,newdata = model1_testing)
 conf1 &lt;- confusionMatrix(model1_results,model1_testing$classe)
-
-###model2
+conf1$overall[&quot;Accuracy&quot;]</code></pre>
+<pre><code>##  Accuracy 
+## 0.9732348</code></pre>
+<pre class="r"><code>###model2
 belt_predict_test &lt;- predict(belt_model, newdata = belt_testset)
 arm_predict_test &lt;- predict(arm_model, newdata = arm_testset)
 forearm_predict_test &lt;- predict(forearm_model, newdata = forearm_testset)
@@ -331,13 +333,16 @@ model2_testing &lt;- data.frame(belt=belt_predict_test, arm=arm_predict_test, fo
                              classe=validate$classe)
 
 model2_results &lt;- predict(model2,newdata = model2_testing)
-conf2 &lt;- confusionMatrix(model2_results,model2_testing$classe)</code></pre>
+conf2 &lt;- confusionMatrix(model2_results,model2_testing$classe)
+conf2$overall[&quot;Accuracy&quot;]</code></pre>
+<pre><code>##  Accuracy 
+## 0.9683915</code></pre>
 <hr />
 </div>
 <div id="conclusion" class="section level2">
 <h2>Conclusion</h2>
 <p>Though not described in this report, the results of <em>Linear discriminant analysis</em> reports have also been considered and found to perform much worse than the default <em>Random forests</em> offered by the <strong>caret</strong> library. <em>Naive Beyas</em> predictions were specifically not investigated, as the whole approach of this study revolved around the dependence between the measurements.</p>
-<p>We found that the first approach resulted in an expected out-of-sample error rate of 2.6765231%, while the second approach actually did slightly worse at 3.1353556%.</p>
+<p>We found that the first approach resulted in an expected out-of-sample error rate of 2.6765231%, while the second approach actually did slightly worse at 3.1608463%.</p>
 </div>
 <div id="citations" class="section level2">
 <h2>Citations</h2>

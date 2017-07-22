@@ -168,6 +168,7 @@ model1_testing <- data.frame(belt=belt_testprep, arm=arm_testprep, forearm=forea
 
 model1_results <- predict(model1,newdata = model1_testing)
 conf1 <- confusionMatrix(model1_results,model1_testing$classe)
+conf1$overall["Accuracy"]
 
 ###model2
 belt_predict_test <- predict(belt_model, newdata = belt_testset)
@@ -179,6 +180,7 @@ model2_testing <- data.frame(belt=belt_predict_test, arm=arm_predict_test, forea
 
 model2_results <- predict(model2,newdata = model2_testing)
 conf2 <- confusionMatrix(model2_results,model2_testing$classe)
+conf2$overall["Accuracy"]
 ```
 ***
 ##Conclusion
